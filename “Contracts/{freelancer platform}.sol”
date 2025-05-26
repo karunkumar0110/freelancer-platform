@@ -1,0 +1,336 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.19;
+
+/**
+ * @title FreelancerPlatform
+ * @dev A decentralized platform for freelance work management
+ * @author Your Name
+ */
+contract Project {
+    
+    // Enums
+    enum JobStatus { Open, InProgress, Completed, Disputed, Cancelled }
+    enum ApplicationStatus { Pending, Accepted, Rejected }
+    
+    // Structs
+    struct Job {
+        uint256 id;
+        address client;
+        string title;
+        string description;
+        uint256 budget;
+        uint256 deadline;
+        JobStatus status;
+        address assignedFreelancer;
+        uint256 createdAt;
+        bool fundsDeposited;
+    }
+    
+    struct Application {
+        uint256 jobId;
+        address freelancer;
+        string proposal;
+        uint256 bidAmount;
+        ApplicationStatus status;
+        uint256 appliedAt;
+    }
+    
+    struct User {
+        bool isRegistered;
+        string name;
+        string skills;
+        uint256 reputation;
+        uint256 completedJobs;
+    }
+    
+    // State Variables
+    mapping(uint256 => Job) public jobs;
+    mapping(uint256 => Application[]) public jobApplications;
+    mapping(address => User) public users;
+    mapping(address => uint256[]) public userJobs; // Jobs created by user
+    mapping(address => uint256[]) public freelancerJobs; // Jobs assigned to freelancer
+    
+    uint256 public nextJobId = 1;
+    uint256 public platformFeePercentage = 250; // 2.5% (basis points)
+    address public owner;
+    
+    // Events
+    event UserRegistered(address indexed user, string name);
+    event JobPosted(uint256 indexed jobId, address indexed client, string title, uint256 budget);
+    event ApplicationSubmitted(uint256 indexed jobId, address indexed freelancer, uint256 bidAmount);
+    event FreelancerHired(uint256 indexed jobId, address indexed freelancer);
+    event JobCompleted(uint256 indexed jobId, address indexed client, address indexed freelancer);
+    event FundsReleased(uint256 indexed jobId, address indexed freelancer, uint256 amount);
+    event DisputeRaised(uint256 indexed jobId, address indexed raiser);
+    
+    // Modifiers
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Only owner can call this function");
+        _;
+    }
+    
+    modifier onlyRegistered() {
+        require(users[msg.sender].isRegistered, "User must be registered");
+        _;
+    }
+    
+    modifier jobExists(uint256 _jobId) {
+        require(_jobId > 0 && _jobId < nextJobId, "Job does not exist");
+        _;
+    }
+    
+    modifier onlyJobClient(uint256 _jobId) {
+        require(jobs[_jobId].client == msg.sender, "Only job client can call this function");
+        _;
+    }
+    
+    constructor() {
+        owner = msg.sender;
+    }
+    
+    // Core Function 1: Register User and Post Job
+    /**
+     * @dev Register a new user and optionally post a job
+     * @param _name User's name
+     * @param _skills User's skills (comma-separated)
+     * @param _jobTitle Job title (empty string if not posting a job)
+     * @param _jobDescription Job description (empty string if not posting a job)
+     * @param _deadline Job deadline timestamp (0 if not posting a job)
+     */
+    function registerAndPostJob(
+        string memory _name,
+        string memory _skills,
+        string memory _jobTitle,
+        string memory _jobDescription,
+        uint256 _deadline
+    ) external payable {
+        // Register user if not already registered
+        if (!users[msg.sender].isRegistered) {
+            users[msg.sender] = User({
+                isRegistered: true,
+                name: _name,
+                skills: _skills,
+                reputation: 100, // Starting reputation
+                completedJobs: 0
+            });
+            emit UserRegistered(msg.sender, _name);
+        }
+        
+        // Post job if job details are provided
+        if (bytes(_jobTitle).length > 0) {
+            require(msg.value > 0, "Budget must be greater than 0");
+            require(_deadline > block.timestamp, "Deadline must be in the future");
+            
+            jobs[nextJobId] = Job({
+                id: nextJobId,
+                client: msg.sender,
+                title: _jobTitle,
+                description: _jobDescription,
+                budget: msg.value,
+                deadline: _deadline,
+                status: JobStatus.Open,
+                assignedFreelancer: address(0),
+                createdAt: block.timestamp,
+                fundsDeposited: true
+            });
+            
+            userJobs[msg.sender].push(nextJobId);
+            
+            emit JobPosted(nextJobId, msg.sender, _jobTitle, msg.value);
+            nextJobId++;
+        }
+    }
+    
+    // Core Function 2: Apply for Job and Manage Applications
+    /**
+     * @dev Apply for a job or manage existing applications
+     * @param _jobId Job ID to apply for
+     * @param _proposal Freelancer's proposal
+     * @param _bidAmount Freelancer's bid amount
+     * @param _action Action to perform: 0=apply, 1=accept application (client only)
+     * @param _applicantIndex Index of application to accept (for client)
+     */
+    function applyAndManageJob(
+        uint256 _jobId,
+        string memory _proposal,
+        uint256 _bidAmount,
+        uint8 _action,
+        uint256 _applicantIndex
+    ) external onlyRegistered jobExists(_jobId) {
+        Job storage job = jobs[_jobId];
+        
+        if (_action == 0) {
+            // Apply for job
+            require(job.status == JobStatus.Open, "Job is not open for applications");
+            require(msg.sender != job.client, "Client cannot apply for their own job");
+            require(_bidAmount <= job.budget, "Bid amount exceeds job budget");
+            
+            // Check if user already applied
+            Application[] storage applications = jobApplications[_jobId];
+            for (uint i = 0; i < applications.length; i++) {
+                require(applications[i].freelancer != msg.sender, "Already applied for this job");
+            }
+            
+            applications.push(Application({
+                jobId: _jobId,
+                freelancer: msg.sender,
+                proposal: _proposal,
+                bidAmount: _bidAmount,
+                status: ApplicationStatus.Pending,
+                appliedAt: block.timestamp
+            }));
+            
+            emit ApplicationSubmitted(_jobId, msg.sender, _bidAmount);
+            
+        } else if (_action == 1) {
+            // Accept application (client only)
+            require(msg.sender == job.client, "Only client can accept applications");
+            require(job.status == JobStatus.Open, "Job is not open");
+            
+            Application[] storage applications = jobApplications[_jobId];
+            require(_applicantIndex < applications.length, "Invalid applicant index");
+            
+            Application storage selectedApp = applications[_applicantIndex];
+            require(selectedApp.status == ApplicationStatus.Pending, "Application already processed");
+            
+            // Update application status
+            selectedApp.status = ApplicationStatus.Accepted;
+            
+            // Update job
+            job.assignedFreelancer = selectedApp.freelancer;
+            job.status = JobStatus.InProgress;
+            
+            // Reject other applications
+            for (uint i = 0; i < applications.length; i++) {
+                if (i != _applicantIndex && applications[i].status == ApplicationStatus.Pending) {
+                    applications[i].status = ApplicationStatus.Rejected;
+                }
+            }
+            
+            freelancerJobs[selectedApp.freelancer].push(_jobId);
+            
+            emit FreelancerHired(_jobId, selectedApp.freelancer);
+        }
+    }
+    
+    // Core Function 3: Complete Job and Release Payment
+    /**
+     * @dev Complete job and handle payment release
+     * @param _jobId Job ID to complete
+     * @param _action Action: 0=mark complete (freelancer), 1=approve & pay (client), 2=raise dispute
+     */
+    function completeAndPay(
+        uint256 _jobId,
+        uint8 _action
+    ) external onlyRegistered jobExists(_jobId) {
+        Job storage job = jobs[_jobId];
+        
+        if (_action == 0) {
+            // Mark job as completed (freelancer only)
+            require(msg.sender == job.assignedFreelancer, "Only assigned freelancer can mark as complete");
+            require(job.status == JobStatus.InProgress, "Job is not in progress");
+            
+            job.status = JobStatus.Completed;
+            emit JobCompleted(_jobId, job.client, job.assignedFreelancer);
+            
+        } else if (_action == 1) {
+            // Approve completion and release payment (client only)
+            require(msg.sender == job.client, "Only client can approve completion");
+            require(job.status == JobStatus.Completed, "Job is not marked as completed");
+            require(job.fundsDeposited, "Funds not deposited");
+            
+            // Calculate platform fee and freelancer payment
+            uint256 platformFee = (job.budget * platformFeePercentage) / 10000;
+            uint256 freelancerPayment = job.budget - platformFee;
+            
+            // Transfer payments
+            payable(job.assignedFreelancer).transfer(freelancerPayment);
+            payable(owner).transfer(platformFee);
+            
+            // Update user reputation and stats
+            users[job.assignedFreelancer].completedJobs++;
+            users[job.assignedFreelancer].reputation += 10;
+            users[job.client].completedJobs++;
+            
+            job.fundsDeposited = false;
+            
+            emit FundsReleased(_jobId, job.assignedFreelancer, freelancerPayment);
+            
+        } else if (_action == 2) {
+            // Raise dispute
+            require(
+                msg.sender == job.client || msg.sender == job.assignedFreelancer,
+                "Only client or freelancer can raise dispute"
+            );
+            require(
+                job.status == JobStatus.InProgress || job.status == JobStatus.Completed,
+                "Invalid job status for dispute"
+            );
+            
+            job.status = JobStatus.Disputed;
+            emit DisputeRaised(_jobId, msg.sender);
+        }
+    }
+    
+    // View Functions
+    function getJob(uint256 _jobId) external view returns (Job memory) {
+        return jobs[_jobId];
+    }
+    
+    function getJobApplications(uint256 _jobId) external view returns (Application[] memory) {
+        return jobApplications[_jobId];
+    }
+    
+    function getUserJobs(address _user) external view returns (uint256[] memory) {
+        return userJobs[_user];
+    }
+    
+    function getFreelancerJobs(address _freelancer) external view returns (uint256[] memory) {
+        return freelancerJobs[_freelancer];
+    }
+    
+    function getUserProfile(address _user) external view returns (User memory) {
+        return users[_user];
+    }
+    
+    // Owner Functions
+    function updatePlatformFee(uint256 _newFeePercentage) external onlyOwner {
+        require(_newFeePercentage <= 1000, "Fee cannot exceed 10%");
+        platformFeePercentage = _newFeePercentage;
+    }
+    
+    function resolveDispute(uint256 _jobId, bool _favorClient) external onlyOwner jobExists(_jobId) {
+        Job storage job = jobs[_jobId];
+        require(job.status == JobStatus.Disputed, "Job is not in dispute");
+        
+        if (_favorClient) {
+            // Refund client
+            payable(job.client).transfer(job.budget);
+            users[job.assignedFreelancer].reputation = users[job.assignedFreelancer].reputation > 20 ? 
+                users[job.assignedFreelancer].reputation - 20 : 0;
+        } else {
+            // Pay freelancer
+            uint256 platformFee = (job.budget * platformFeePercentage) / 10000;
+            uint256 freelancerPayment = job.budget - platformFee;
+            
+            payable(job.assignedFreelancer).transfer(freelancerPayment);
+            payable(owner).transfer(platformFee);
+            
+            users[job.assignedFreelancer].completedJobs++;
+            users[job.assignedFreelancer].reputation += 5;
+        }
+        
+        job.status = JobStatus.Completed;
+        job.fundsDeposited = false;
+    }
+    
+    // Emergency function
+    function emergencyWithdraw(uint256 _jobId) external onlyOwner jobExists(_jobId) {
+        Job storage job = jobs[_jobId];
+        require(job.fundsDeposited, "No funds to withdraw");
+        
+        payable(owner).transfer(job.budget);
+        job.fundsDeposited = false;
+        job.status = JobStatus.Cancelled;
+    }
+}
