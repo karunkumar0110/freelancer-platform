@@ -214,7 +214,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## Support
 
 For questions and support:
-- Create an issue on GitHub
+- 
 - Join our Discord community
 - Follow us on Twitter
 
