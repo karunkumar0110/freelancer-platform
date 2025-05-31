@@ -1,4 +1,4 @@
-# Freelancer Platform
+hi# Freelancer Platform
 
 ## Project Description
 
@@ -444,8 +444,5 @@ For questions and support:
 
 ---
 
-*Building the future of work, one smart contract at a time.* 🚀
-
-0xd9145CCE52D386f254917e481eB44e9943F39138![Screenshot 2025-05-26 132431](https://github.com/user-attachments/assets/8d689138-8d40-40e1-a62b-cca789392668)
-![Core_logo](https://github.com/user-attachments/assets/4691cdb4-5922-49aa-8c56-a2a209bee58f)
+*Building the future of work, one smart contract at a time
 
