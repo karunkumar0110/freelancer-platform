@@ -220,8 +220,7 @@ For questions and support:
 
 ---
 
-*Building the future of work, one smart contract at a time.* 🚀![hq720](https://github.com/user-attachments/assets/917d46aa-3797-49e4-b928-da74ee5d068e)
-
+*Building the future of work, one smart contract at a time.* 🚀!
 # Freelancer Platform
 
 ## Project Description
